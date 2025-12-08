@@ -125,27 +125,58 @@ tfidf_recipe <- recipe(cuisine ~ ingredients, data = trainData) %>%
 tfidf_prep <- prep(tfidf_recipe)
 bake(tfidf_prep, new_data = trainData)
 
-### Random Forest
+### New Recipe
+
+new_recipe <- recipe(cuisine ~ ingredients, data = trainData) %>%
+  step_mutate(ingredients = as.character(ingredients)) %>%
+  # Count words first
+  step_mutate(ingredient_count = str_count(ingredients, "\\S+")) %>%
+  step_tokenize(ingredients, token = "words") %>%
+  step_tokenfilter(ingredients, max_tokens = 500) %>%
+  step_tfidf(ingredients) %>%
+  step_normalize(ingredient_count)
+
+new_prep <- prep(new_recipe)
+bake(new_prep, new_data = trainData)
+
+#####
+
+## Random Forest - Score: 0.68211, More Trees: 0.68423, New Recipe:
+#####
 
 library(rpart)
 
+# tree_mod <- rand_forest(mtry=tune(),
+#                         min_n=tune(),
+#                         trees=100) %>%
+#   set_engine("ranger") %>%
+#   set_mode("classification")
+
 tree_mod <- rand_forest(mtry=tune(),
                         min_n=tune(),
-                        trees=100) %>%
+                        trees=500) %>%
   set_engine("ranger") %>%
   set_mode("classification")
 
+# tree_workflow <- workflow() %>%
+#   add_recipe(tfidf_recipe) %>%
+#   add_model(tree_mod)
+
 tree_workflow <- workflow() %>%
-  add_recipe(tfidf_recipe) %>%
+  add_recipe(new_recipe) %>%
   add_model(tree_mod)
 
-#### Grid of values to tune Over
+### Grid of values to tune Over
 
-tuning_grid <- grid_regular(mtry(range = c(1,20)),
-                            min_n(),
-                            levels=5)
+# tuning_grid <- grid_regular(mtry(range = c(1,20)),
+#                             min_n(),
+#                             levels=5)
 
-#### CV
+tuning_grid <- grid_regular(mtry(range = c(20, 80)),
+                            min_n(range = c(5, 50)),
+                            levels = 5)
+
+### CV
 
 folds <- vfold_cv(trainData, v = 5, repeats = 1)
 
@@ -154,30 +185,31 @@ CV_results <- tree_workflow %>%
             grid=tuning_grid,
             metrics=(metric_set(accuracy)))
 
-#### Find best tuning parameters
+### Find best tuning parameters
 
 bestTune <- CV_results %>%
   select_best(metric="accuracy")
 
-#### Finalize workflow
+### Finalize workflow
 
 final_wf <-
   tree_workflow %>%
   finalize_workflow(bestTune) %>%
   fit(data=trainData)
 
-#### Predict
+### Predict
 
 tree_predictions <- final_wf %>%
   predict(new_data = testData, type="class")
 
-#### Kaggle
+### Kaggle
 
 tree_kaggle_submission <- tree_predictions %>%
   bind_cols(., testData) %>%
   select(id, .pred_class) %>%
   rename(cuisine=.pred_class)
 
-vroom_write(x=tree_kaggle_submission, file="./RF_TDIDF_Preds.csv", delim=',')
+# vroom_write(x=tree_kaggle_submission, file="./RF_TDIDF_Preds.csv", delim=',')
+vroom_write(x=tree_kaggle_submission, file="./RF_MT_Preds.csv", delim=',')
 
 #####
